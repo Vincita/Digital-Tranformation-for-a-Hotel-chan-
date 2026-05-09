@@ -1,0 +1,230 @@
+DROP TABLE IF EXISTS fact_booking;
+DROP TABLE IF EXISTS dim_customer;
+DROP TABLE IF EXISTS dim_room;
+DROP TABLE IF EXISTS dim_roomtype;
+DROP TABLE IF EXISTS dim_channel;
+DROP TABLE IF EXISTS dim_date;
+DROP TABLE IF EXISTS staging_booking;
+
+DROP TABLE IF EXISTS staging_booking;
+
+CREATE TABLE staging_booking (
+    ma_dat_phong NVARCHAR(50),
+    loai_phong NVARCHAR(100),
+    ten_phong NVARCHAR(100),
+    ten_khach NVARCHAR(255),
+
+    ngay_den NVARCHAR(50),
+    ngay_di NVARCHAR(50),
+
+    tien_phong NVARCHAR(50),
+    dich_vu NVARCHAR(50),
+    tong_doanh_thu NVARCHAR(50),
+
+    no_truoc NVARCHAR(50),
+    tien_mat NVARCHAR(50),
+    the_tin_dung NVARCHAR(50),
+    chuyen_khoan NVARCHAR(50),
+    cong_no NVARCHAR(50),
+    con_thieu NVARCHAR(50),
+
+    nguon NVARCHAR(100),
+    trang_thai NVARCHAR(50),
+
+    so_hoa_don NVARCHAR(50),
+    gia_trung_binh NVARCHAR(50),
+    so_dem NVARCHAR(50)
+);
+
+UPDATE staging_booking
+SET
+    tien_phong = REPLACE(tien_phong, ',', ''),
+    dich_vu = REPLACE(dich_vu, ',', ''),
+    tong_doanh_thu = REPLACE(tong_doanh_thu, ',', ''),
+    tien_mat = REPLACE(tien_mat, ',', ''),
+    the_tin_dung = REPLACE(the_tin_dung, ',', ''),
+    chuyen_khoan = REPLACE(chuyen_khoan, ',', ''),
+    cong_no = REPLACE(cong_no, ',', ''),
+    con_thieu = REPLACE(con_thieu, ',', ''),
+    gia_trung_binh = REPLACE(gia_trung_binh, ',', '');
+
+CREATE TABLE dim_customer (
+    customer_id INT PRIMARY KEY,
+    full_name NVARCHAR(255)
+);
+
+CREATE TABLE dim_roomtype (
+    type_id INT PRIMARY KEY,
+    room_type NVARCHAR(100)
+);
+
+CREATE TABLE dim_room (
+    room_id INT PRIMARY KEY,
+    room_name NVARCHAR(100),
+    type_id INT
+);
+
+CREATE TABLE dim_channel (
+    channel_id INT PRIMARY KEY,
+    channel_name NVARCHAR(100)
+);
+
+CREATE TABLE dim_date (
+    date_id INT PRIMARY KEY,
+    full_date DATE
+);
+
+INSERT INTO dim_customer VALUES (-1, 'unknown');
+INSERT INTO dim_roomtype VALUES (-1, 'unknown');
+INSERT INTO dim_room VALUES (-1, 'unknown', -1);
+INSERT INTO dim_channel VALUES (-1, 'unknown');
+INSERT INTO dim_date VALUES (-1, '1900-01-01');
+
+INSERT INTO dim_customer
+SELECT
+    ROW_NUMBER() OVER (ORDER BY full_name) AS id,
+    full_name
+FROM (
+    SELECT DISTINCT LTRIM(RTRIM(LOWER(ten_khach))) AS full_name
+    FROM staging_booking
+    WHERE ten_khach IS NOT NULL
+) t;
+
+INSERT INTO dim_roomtype
+SELECT
+    ROW_NUMBER() OVER (ORDER BY room_type),
+    room_type
+FROM (
+    SELECT DISTINCT LTRIM(RTRIM(loai_phong)) AS room_type
+    FROM staging_booking
+) t;
+
+INSERT INTO dim_room
+SELECT
+    ROW_NUMBER() OVER (ORDER BY room_name),
+    room_name,
+    ISNULL(rt.type_id, -1)
+FROM (
+    SELECT DISTINCT
+        LTRIM(RTRIM(ten_phong)) AS room_name,
+        LTRIM(RTRIM(loai_phong)) AS room_type
+    FROM staging_booking
+) s
+LEFT JOIN dim_roomtype rt
+ON s.room_type = rt.room_type;
+
+INSERT INTO dim_channel
+SELECT
+    ROW_NUMBER() OVER (ORDER BY channel_name),
+    channel_name
+FROM (
+    SELECT DISTINCT LTRIM(RTRIM(LOWER(nguon))) AS channel_name
+    FROM staging_booking
+    WHERE nguon IS NOT NULL
+) t;
+
+INSERT INTO dim_date
+SELECT
+    ROW_NUMBER() OVER (ORDER BY full_date),
+    full_date
+FROM (
+    SELECT DISTINCT TRY_CONVERT(DATE, ngay_den, 103) AS full_date FROM staging_booking
+    UNION
+    SELECT DISTINCT TRY_CONVERT(DATE, ngay_di, 103) FROM staging_booking
+) t
+WHERE full_date IS NOT NULL;
+
+CREATE TABLE fact_booking (
+    booking_id INT,
+
+    customer_id INT,
+    room_id INT,
+    channel_id INT,
+    checkin_date_id INT,
+    checkout_date_id INT,
+
+    nights INT,
+    avg_price DECIMAL(18,2),
+
+    status NVARCHAR(50),
+
+    room_revenue DECIMAL(18,2),
+    service_revenue DECIMAL(18,2),
+    total_revenue DECIMAL(18,2),
+
+    previous_debt DECIMAL(18,2),
+    cash_amount DECIMAL(18,2),
+    card_amount DECIMAL(18,2),
+    transfer_amount DECIMAL(18,2),
+    debt_amount DECIMAL(18,2),
+    remaining_amount DECIMAL(18,2),
+
+    invoice_id NVARCHAR(100),
+
+    is_valid BIT,
+    error_reason NVARCHAR(255)
+);
+
+INSERT INTO fact_booking
+SELECT
+    TRY_CAST(ma_dat_phong AS INT),
+
+    ISNULL(c.customer_id, -1),
+    ISNULL(r.room_id, -1),
+    ISNULL(ch.channel_id, -1),
+
+    ISNULL(d1.date_id, -1),
+    ISNULL(d2.date_id, -1),
+
+    TRY_CAST(so_dem AS INT),
+    TRY_CAST(gia_trung_binh AS DECIMAL(18,2)),
+
+    s.trang_thai,
+
+    TRY_CAST(tien_phong AS DECIMAL(18,2)),
+    TRY_CAST(dich_vu AS DECIMAL(18,2)),
+    TRY_CAST(tong_doanh_thu AS DECIMAL(18,2)),
+
+    TRY_CAST(no_truoc AS DECIMAL(18,2)),
+    TRY_CAST(tien_mat AS DECIMAL(18,2)),
+    TRY_CAST(the_tin_dung AS DECIMAL(18,2)),
+    TRY_CAST(chuyen_khoan AS DECIMAL(18,2)),
+    TRY_CAST(cong_no AS DECIMAL(18,2)),
+    TRY_CAST(con_thieu AS DECIMAL(18,2)),
+
+    so_hoa_don,
+
+    CASE
+        WHEN c.customer_id IS NULL THEN 0
+        WHEN r.room_id IS NULL THEN 0
+        WHEN d1.date_id IS NULL THEN 0
+        ELSE 1
+    END,
+
+    CASE
+        WHEN c.customer_id IS NULL THEN 'missing customer'
+        WHEN r.room_id IS NULL THEN 'missing room'
+        WHEN d1.date_id IS NULL THEN 'invalid date'
+        ELSE NULL
+    END
+
+FROM staging_booking s
+
+LEFT JOIN dim_customer c
+ON LTRIM(RTRIM(LOWER(s.ten_khach))) = c.full_name
+
+LEFT JOIN dim_room r
+ON LTRIM(RTRIM(s.ten_phong)) = r.room_name
+
+LEFT JOIN dim_channel ch
+ON LTRIM(RTRIM(LOWER(s.nguon))) = ch.channel_name
+
+LEFT JOIN dim_date d1
+ON TRY_CONVERT(DATE, s.ngay_den, 103) = d1.full_date
+
+LEFT JOIN dim_date d2
+ON TRY_CONVERT(DATE, s.ngay_di, 103) = d2.full_date;
+
+SELECT COUNT(*) FROM staging_booking;
+
+SELECT COUNT(*) FROM fact_booking;
